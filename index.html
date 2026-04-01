@@ -261,11 +261,18 @@
       isAdmin = false;
       document.getElementById("admin-panel").classList.add("hidden");
       document.getElementById("btn-admin").textContent = "Admin";
+      document.getElementById("btn-admin").classList.remove("admin-active");
+      updateAdminUI();
       renderTabla();
       renderPartidos();
     } else {
       document.getElementById("admin-panel").classList.toggle("hidden");
     }
+  }
+
+  function updateAdminUI() {
+    document.getElementById("admin-jugadores").style.display = isAdmin ? "block" : "none";
+    document.getElementById("btn-nuevo-partido").style.display = isAdmin ? "inline-flex" : "none";
   }
 
   function loginAdmin() {
@@ -276,6 +283,7 @@
       document.getElementById("btn-admin").textContent = "✓ Admin";
       document.getElementById("btn-admin").classList.add("admin-active");
       showToast("Modo admin activado");
+      updateAdminUI();
       renderTabla();
       renderPartidos();
     } else {
@@ -937,16 +945,7 @@
 
 <div id="toast"></div>
 
-<!-- Show admin tools when logged in -->
-<script type="module">
-  // Extend admin visibility with MutationObserver trick
-  const observer = new MutationObserver(() => {
-    const adminActive = document.getElementById("btn-admin")?.classList.contains("admin-active");
-    document.getElementById("admin-jugadores").style.display = adminActive ? "block" : "none";
-    document.getElementById("btn-nuevo-partido").style.display = adminActive ? "inline-flex" : "none";
-  });
-  observer.observe(document.getElementById("btn-admin"), { attributes: true });
-</script>
+
 
 </body>
 </html>
