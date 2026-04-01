@@ -48,6 +48,7 @@
   function setupUI() {
     document.getElementById("btn-tabla").addEventListener("click", () => showSection("tabla"));
     document.getElementById("btn-partidos").addEventListener("click", () => showSection("partidos"));
+    document.getElementById("btn-goleadores").addEventListener("click", () => showSection("goleadores"));
     document.getElementById("btn-admin").addEventListener("click", toggleAdmin);
     document.getElementById("btn-nuevo-partido").addEventListener("click", () => showSection("nuevo-partido"));
     document.getElementById("btn-agregar-jugador").addEventListener("click", agregarJugador);
@@ -74,6 +75,7 @@
       matches = snap.docs.map(d => ({ id: d.id, ...d.data() }));
       renderTabla();
       renderPartidos();
+      renderGoleadores();
     });
   }
 
@@ -194,6 +196,13 @@
       const resClass = m.resultado === "A" ? "res-a" : m.resultado === "B" ? "res-b" : "res-e";
       const teamA = (m.equipoA || []).map(playerName).join(", ");
       const teamB = (m.equipoB || []).map(playerName).join(", ");
+      const marcador = m.marcador ? `${m.marcador.A} — ${m.marcador.B}` : null;
+      const goleadoresList = m.goleadores
+        ? Object.entries(m.goleadores)
+            .map(([pid, g]) => `${playerName(pid)} (${g})`)
+            .join(", ")
+        : null;
+
       return `
       <div class="partido-card">
         <div class="partido-fecha">${fecha}</div>
@@ -202,14 +211,67 @@
             <span class="eq-label">Equipo A</span>
             <span class="eq-jugadores">${teamA}</span>
           </div>
-          <div class="vs-badge ${resClass}">${resLabel}</div>
+          <div class="vs-center">
+            ${marcador ? `<div class="marcador-badge">${marcador}</div>` : ""}
+            <div class="vs-badge ${resClass}">${resLabel}</div>
+          </div>
           <div class="equipo equipo-b ${m.resultado==='B'?'ganador':''}">
             <span class="eq-label">Equipo B</span>
             <span class="eq-jugadores">${teamB}</span>
           </div>
         </div>
+        ${goleadoresList ? `<div class="partido-goleadores">⚽ ${goleadoresList}</div>` : ""}
         ${isAdmin ? `<button class="btn-del-match" onclick="window._delMatch('${m.id}')">Eliminar partido</button>` : ""}
       </div>`;
+    }).join("");
+  }
+
+
+  // ---- Render Goleadores ----
+  function renderGoleadores() {
+    const tbody = document.getElementById("goleadores-body");
+    if (!tbody) return;
+
+    const goles = {};
+    const pj = {};
+    players.forEach(p => { goles[p.id] = 0; pj[p.id] = 0; });
+
+    matches.forEach(m => {
+      const allPlayers = [...(m.equipoA || []), ...(m.equipoB || [])];
+      allPlayers.forEach(pid => { if (pj[pid] !== undefined) pj[pid]++; });
+      if (m.goleadores) {
+        Object.entries(m.goleadores).forEach(([pid, g]) => {
+          if (goles[pid] !== undefined) goles[pid] += g;
+        });
+      }
+    });
+
+    const stats = players
+      .map(p => ({
+        id: p.id,
+        nombre: p.nombre,
+        goles: goles[p.id] || 0,
+        pj: pj[p.id] || 0,
+        promedio: pj[p.id] > 0 ? (goles[p.id] / pj[p.id]).toFixed(2) : "0.00"
+      }))
+      .filter(p => p.goles > 0)
+      .sort((a, b) => b.goles - a.goles || parseFloat(b.promedio) - parseFloat(a.promedio));
+
+    if (stats.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="5" class="empty">Todavía no hay goles cargados.</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = stats.map((s, i) => {
+      const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${i+1}`;
+      return `
+      <tr class="${i === 0 ? 'leader' : ''}">
+        <td class="pos">${medal}</td>
+        <td class="nombre">${s.nombre}</td>
+        <td><span class="pts-badge">${s.goles}</span></td>
+        <td>${s.pj}</td>
+        <td class="wr-num" style="color:var(--amarillo);font-weight:700">${s.promedio}</td>
+      </tr>`;
     }).join("");
   }
 
@@ -226,7 +288,39 @@
         </label>
       `).join("");
     });
+    renderGoleadoresInputs();
   }
+
+  function renderGoleadoresInputs() {
+    const allSelected = [
+      ...[...selectedTeamA].map(id => ({ id, team: "A" })),
+      ...[...selectedTeamB].map(id => ({ id, team: "B" }))
+    ];
+    const container = document.getElementById("goleadores-inputs");
+    if (!container) return;
+    if (allSelected.length === 0) {
+      container.innerHTML = `<p class="gol-hint">Primero seleccioná los jugadores de cada equipo.</p>`;
+      return;
+    }
+    const playerName = id => players.find(p => p.id === id)?.nombre || id;
+    container.innerHTML = allSelected.map(({ id, team }) => `
+      <div class="gol-row">
+        <span class="gol-nombre"><span class="gol-team-badge team-${team.toLowerCase()}">${team}</span>${playerName(id)}</span>
+        <div class="gol-counter">
+          <button type="button" class="gol-btn" onclick="window._changeGol('${id}',-1)">−</button>
+          <input class="gol-input" data-pid="${id}" type="number" min="0" value="0" readonly>
+          <button type="button" class="gol-btn" onclick="window._changeGol('${id}',1)">+</button>
+        </div>
+      </div>
+    `).join("");
+  }
+
+  window._changeGol = (pid, delta) => {
+    const input = document.querySelector(`.gol-input[data-pid="${pid}"]`);
+    if (!input) return;
+    const newVal = Math.max(0, (parseInt(input.value) || 0) + delta);
+    input.value = newVal;
+  };
 
   window._togglePlayer = (team, id) => {
     const set = team === "A" ? selectedTeamA : selectedTeamB;
@@ -253,14 +347,26 @@
     const resultado = document.querySelector('input[name="resultado"]:checked')?.value;
     if (!resultado) { showToast("Seleccioná el resultado"); return; }
 
-    // Check overlap
     const overlap = [...selectedTeamA].some(id => selectedTeamB.has(id));
     if (overlap) { showToast("Un jugador no puede estar en ambos equipos"); return; }
+
+    // Collect goleadores
+    const goleadores = {};
+    document.querySelectorAll(".gol-input").forEach(input => {
+      const pid = input.dataset.pid;
+      const val = parseInt(input.value) || 0;
+      if (val > 0) goleadores[pid] = val;
+    });
 
     await addDoc(collection(db, "partidos"), {
       equipoA: [...selectedTeamA],
       equipoB: [...selectedTeamB],
       resultado,
+      goleadores,
+      marcador: {
+        A: parseInt(document.getElementById("score-a").value) || 0,
+        B: parseInt(document.getElementById("score-b").value) || 0
+      },
       fecha: serverTimestamp()
     });
 
@@ -321,7 +427,7 @@
     document.querySelectorAll(".section").forEach(s => s.classList.remove("active"));
     document.getElementById(`section-${id}`)?.classList.add("active");
     document.querySelectorAll(".nav-btn").forEach(b => b.classList.remove("active"));
-    const map = { "tabla": "btn-tabla", "partidos": "btn-partidos", "nuevo-partido": "btn-partidos" };
+    const map = { "tabla": "btn-tabla", "partidos": "btn-partidos", "nuevo-partido": "btn-partidos", "goleadores": "btn-goleadores" };
     document.getElementById(map[id])?.classList.add("active");
 
     if (id === "nuevo-partido") {
@@ -881,6 +987,122 @@
     .divisor-label { font-size: 0.65rem; }
   }
 
+  /* ---- Score input ---- */
+  .score-row {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+  }
+  .score-block {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.3rem;
+  }
+  .score-label {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--muted);
+    font-weight: 600;
+  }
+  .score-input {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 2rem;
+    width: 70px;
+    text-align: center;
+    border-radius: 8px;
+    padding: 0.3rem;
+  }
+  .score-input:focus { outline: none; border-color: var(--verde); }
+  .score-sep {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 2rem;
+    color: var(--muted);
+    margin-top: 1.2rem;
+  }
+
+  /* ---- Goleadores inputs ---- */
+  .gol-hint { color: var(--muted); font-size: 0.85rem; font-style: italic; }
+
+  .gol-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.45rem 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .gol-row:last-child { border-bottom: none; }
+
+  .gol-nombre {
+    font-size: 0.9rem;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .gol-team-badge {
+    font-size: 0.65rem;
+    font-weight: 700;
+    padding: 0.1rem 0.4rem;
+    border-radius: 4px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+  .team-a { background: rgba(0,200,83,0.15); color: var(--verde); }
+  .team-b { background: rgba(100,150,255,0.15); color: #7eb3ff; }
+
+  .gol-counter { display: flex; align-items: center; gap: 0.4rem; }
+  .gol-btn {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    color: var(--text);
+    width: 28px; height: 28px;
+    border-radius: 6px;
+    font-size: 1.1rem;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: all 0.15s;
+    line-height: 1;
+  }
+  .gol-btn:hover { border-color: var(--verde); color: var(--verde); }
+  .gol-input {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    color: var(--text);
+    width: 36px;
+    text-align: center;
+    border-radius: 6px;
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 1.1rem;
+    padding: 0.2rem;
+  }
+
+  /* ---- Partido card updates ---- */
+  .vs-center {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.3rem;
+  }
+  .marcador-badge {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 1.4rem;
+    color: var(--text);
+    letter-spacing: 2px;
+    line-height: 1;
+  }
+  .partido-goleadores {
+    margin-top: 0.6rem;
+    font-size: 0.8rem;
+    color: var(--muted);
+    border-top: 1px solid var(--border);
+    padding-top: 0.5rem;
+  }
+
   /* Scrollbar */
   ::-webkit-scrollbar { width: 6px; height: 6px; }
   ::-webkit-scrollbar-track { background: var(--bg); }
@@ -895,6 +1117,7 @@
     <nav>
       <button class="nav-btn active" id="btn-tabla">⚽ Tabla</button>
       <button class="nav-btn" id="btn-partidos">📋 Partidos</button>
+      <button class="nav-btn" id="btn-goleadores">⚽ Goleadores</button>
       <button class="nav-btn" id="btn-admin">Admin</button>
     </nav>
   </div>
@@ -993,12 +1216,58 @@
         </div>
       </div>
 
+      <div class="resultado-group">
+        <h4>Marcador</h4>
+        <div class="score-row">
+          <div class="score-block">
+            <span class="score-label">Equipo A</span>
+            <input id="score-a" type="number" min="0" value="0" class="score-input">
+          </div>
+          <span class="score-sep">—</span>
+          <div class="score-block">
+            <span class="score-label">Equipo B</span>
+            <input id="score-b" type="number" min="0" value="0" class="score-input">
+          </div>
+        </div>
+      </div>
+
+      <div class="resultado-group">
+        <h4>Goleadores</h4>
+        <div id="goleadores-inputs">
+          <p class="gol-hint">Primero seleccioná los jugadores de cada equipo.</p>
+        </div>
+      </div>
+
       <div class="form-actions">
         <button class="btn" id="btn-guardar-partido">Guardar partido</button>
         <button class="btn btn-secondary" id="btn-cancelar-partido">Cancelar</button>
       </div>
     </div>
   </section>
+
+  <!-- GOLEADORES -->
+  <section class="section" id="section-goleadores">
+    <div class="section-header">
+      <div class="section-title">Tabla de Goleadores</div>
+    </div>
+    <div class="tabla-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th style="text-align:left">Jugador</th>
+            <th>⚽ Goles</th>
+            <th>PJ</th>
+            <th>Promedio</th>
+          </tr>
+        </thead>
+        <tbody id="goleadores-body">
+          <tr><td colspan="5" class="empty">Cargando...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
 
 </main>
 
