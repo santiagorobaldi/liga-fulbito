@@ -103,30 +103,40 @@
       else { processTeam(equipoA, "draw"); processTeam(equipoB, "draw"); }
     });
 
+    const totalPartidos = matches.length;
+    const minPartidos = Math.ceil(totalPartidos * 0.6);
+
     return Object.entries(stats).map(([id, s]) => ({
       id, ...s,
-      winrate: s.PJ > 0 ? Math.round((s.PG / s.PJ) * 100) : 0
+      rendimiento: s.PJ > 0 ? Math.round((s.pts / (s.PJ * 3)) * 100) : 0,
+      cumpleMinimo: s.PJ >= minPartidos,
+      minPartidos
     }));
   }
 
   // ---- Render Tabla ----
   function renderTabla() {
     const stats = calcStats();
-    const sortBy = document.getElementById("sort-select")?.value || "winrate";
+    const sortBy = document.getElementById("sort-select")?.value || "rendimiento";
+    const totalPartidos = matches.length;
+    const minPartidos = totalPartidos > 0 ? Math.ceil(totalPartidos * 0.6) : 1;
 
-    stats.sort((a, b) => {
-      if (sortBy === "winrate") return b.winrate - a.winrate || b.PJ - a.PJ;
-      return b.pts - a.pts || b.winrate - a.winrate;
-    });
+    const sortFn = (a, b) => {
+      if (sortBy === "rendimiento") return b.rendimiento - a.rendimiento || b.PJ - a.PJ;
+      return b.pts - a.pts || b.rendimiento - a.rendimiento;
+    };
+
+    const calificados = stats.filter(s => s.cumpleMinimo).sort(sortFn);
+    const noCalificados = stats.filter(s => !s.cumpleMinimo).sort(sortFn);
 
     const tbody = document.getElementById("tabla-body");
     if (!tbody) return;
 
-    tbody.innerHTML = stats.map((s, i) => {
-      const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${i+1}`;
-      const barW = s.winrate;
+    const renderRow = (s, i, isRanked) => {
+      const medal = !isRanked ? "—" : i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${i+1}`;
+      const barW = s.rendimiento;
       return `
-      <tr class="${i === 0 ? 'leader' : ''}">
+      <tr class="${isRanked && i === 0 ? 'leader' : ''} ${!isRanked ? 'no-clasificado' : ''}">
         <td class="pos">${medal}</td>
         <td class="nombre">${s.nombre}</td>
         <td class="pts-cell"><span class="pts-badge">${s.pts}</span></td>
@@ -142,11 +152,26 @@
         </td>
         ${isAdmin ? `<td><button class="btn-del" onclick="window._delPlayer('${s.id}')">✕</button></td>` : ""}
       </tr>`;
-    }).join("");
+    };
 
     if (stats.length === 0) {
       tbody.innerHTML = `<tr><td colspan="9" class="empty">Todavía no hay jugadores. ¡Agregá al grupo!</td></tr>`;
+      return;
     }
+
+    let html = calificados.map((s, i) => renderRow(s, i, true)).join("");
+
+    if (noCalificados.length > 0) {
+      const cols = isAdmin ? 9 : 8;
+      html += `<tr class="divisor-row">
+        <td colspan="${cols}">
+          <div class="divisor-label">Sin mínimo de partidos (${minPartidos} requeridos · 60% de ${totalPartidos})</div>
+        </td>
+      </tr>`;
+      html += noCalificados.map((s, i) => renderRow(s, i, false)).join("");
+    }
+
+    tbody.innerHTML = html;
 
     // Toggle admin col header
     const thAdmin = document.getElementById("th-admin");
@@ -811,15 +836,49 @@
   #toast.show { transform: translateX(-50%) translateY(0); }
 
   /* ---- Responsive ---- */
-  @media (max-width: 540px) {
-    .logo { font-size: 1.3rem; }
-    .nav-btn { font-size: 0.78rem; padding: 0.35rem 0.55rem; }
+  /* ---- No clasificado / divisor ---- */
+  tr.no-clasificado td { opacity: 0.55; }
+  tr.no-clasificado .pts-badge { background: rgba(255,255,255,0.06); color: var(--muted); }
+
+  .divisor-row td { padding: 0; border-bottom: none; }
+  .divisor-label {
+    background: var(--bg3);
+    color: var(--muted);
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    padding: 0.45rem 0.75rem;
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    font-weight: 600;
+  }
+
+  @media (max-width: 640px) {
+    .logo { font-size: 1.2rem; }
+    .nav-btn { font-size: 0.75rem; padding: 0.3rem 0.5rem; }
     .teams-grid { grid-template-columns: 1fr; }
-    .partido-equipos { grid-template-columns: 1fr; }
-    .vs-badge { margin: 0 auto; }
-    td { padding: 0.6rem 0.4rem; font-size: 0.82rem; }
-    th { padding: 0.5rem 0.4rem; font-size: 0.65rem; }
-    .winrate-cell { display: none; }
+    .partido-equipos { grid-template-columns: 1fr; gap: 0.4rem; }
+    .vs-badge { margin: 0 auto; width: fit-content; }
+    td { padding: 0.55rem 0.35rem; font-size: 0.8rem; }
+    th { padding: 0.45rem 0.35rem; font-size: 0.62rem; }
+
+    /* En mobile mostramos rendimiento como número simple, sin barra */
+    .winrate-cell { min-width: 52px; }
+    .wr-bar { display: none; }
+    .wr-wrap { background: transparent; height: auto; }
+    .wr-num { font-size: 0.82rem; font-weight: 700; color: var(--verde); }
+
+    /* Ocultar PE en mobile para ahorrar espacio */
+    th:nth-child(6), td:nth-child(6) { display: none; }
+
+    .section-header { flex-direction: column; align-items: flex-start; }
+    .match-form { padding: 1rem; gap: 1rem; }
+    .partido-card { padding: 0.75rem 1rem; }
+    .resultado-options { flex-direction: column; }
+    .resultado-option { justify-content: center; }
+    .form-actions { flex-direction: column; }
+    .form-actions .btn { width: 100%; justify-content: center; }
+    .divisor-label { font-size: 0.65rem; }
   }
 
   /* Scrollbar */
@@ -856,7 +915,7 @@
       <div class="sort-wrap">
         Ordenar por
         <select id="sort-select">
-          <option value="winrate">Winrate %</option>
+          <option value="rendimiento">Rendimiento %</option>
           <option value="puntos">Puntos totales</option>
         </select>
       </div>
