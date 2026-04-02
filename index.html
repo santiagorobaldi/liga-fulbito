@@ -233,12 +233,21 @@
     if (!tbody) return;
 
     const goles = {};
-    const pj = {};
-    players.forEach(p => { goles[p.id] = 0; pj[p.id] = 0; });
+    const pjTotal = {};      // todos los partidos jugados
+    const pjConGoles = {};   // solo partidos con marcador > 0-0
+    players.forEach(p => { goles[p.id] = 0; pjTotal[p.id] = 0; pjConGoles[p.id] = 0; });
 
     matches.forEach(m => {
       const allPlayers = [...(m.equipoA || []), ...(m.equipoB || [])];
-      allPlayers.forEach(pid => { if (pj[pid] !== undefined) pj[pid]++; });
+      const tieneGolesCargados = m.marcador && (m.marcador.A + m.marcador.B) > 0;
+
+      allPlayers.forEach(pid => {
+        if (pjTotal[pid] !== undefined) {
+          pjTotal[pid]++;
+          if (tieneGolesCargados) pjConGoles[pid]++;
+        }
+      });
+
       if (m.goleadores) {
         Object.entries(m.goleadores).forEach(([pid, g]) => {
           if (goles[pid] !== undefined) goles[pid] += g;
@@ -251,8 +260,9 @@
         id: p.id,
         nombre: p.nombre,
         goles: goles[p.id] || 0,
-        pj: pj[p.id] || 0,
-        promedio: pj[p.id] > 0 ? (goles[p.id] / pj[p.id]).toFixed(2) : "0.00"
+        pj: pjTotal[p.id] || 0,
+        pjConGoles: pjConGoles[p.id] || 0,
+        promedio: pjConGoles[p.id] > 0 ? (goles[p.id] / pjConGoles[p.id]).toFixed(2) : "0.00"
       }))
       .filter(p => p.goles > 0)
       .sort((a, b) => b.goles - a.goles || parseFloat(b.promedio) - parseFloat(a.promedio));
@@ -269,7 +279,7 @@
         <td class="pos">${medal}</td>
         <td class="nombre">${s.nombre}</td>
         <td><span class="pts-badge">${s.goles}</span></td>
-        <td>${s.pj}</td>
+        <td title="Partidos con goles cargados / total jugados">${s.pjConGoles}<span style="color:var(--muted);font-size:0.75rem">/${s.pj}</span></td>
         <td class="wr-num" style="color:var(--amarillo);font-weight:700">${s.promedio}</td>
       </tr>`;
     }).join("");
