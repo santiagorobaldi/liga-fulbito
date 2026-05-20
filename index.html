@@ -110,7 +110,7 @@
 
     return Object.entries(stats).map(([id, s]) => ({
       id, ...s,
-      rendimiento: s.PJ > 0 ? Math.round((s.pts / (s.PJ * 3)) * 100) : 0,
+      rendimiento: s.PJ > 0 ? (s.pts / (s.PJ * 3)) * 100 : 0,
       cumpleMinimo: s.PJ >= minPartidos,
       minPartidos
     }));
