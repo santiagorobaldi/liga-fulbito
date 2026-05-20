@@ -13,9 +13,6 @@
     onSnapshot, query, orderBy, serverTimestamp
   } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
-  // =====================================================
-  // 🔥 REEMPLAZÁ ESTO CON TU CONFIG DE FIREBASE
-  // =====================================================
   const firebaseConfig = {
     apiKey: "AIzaSyAdCrdsyQDVWMG4BBbH-WAKj49JsPWVeg0",
     authDomain: "fulbito-c856e.firebaseapp.com",
@@ -24,21 +21,18 @@
     messagingSenderId: "327341361784",
     appId: "1:327341361784:web:81df461ccb7fca1b9cfb8d"
   };
-  // =====================================================
 
-  const ADMIN_PASSWORD = "gol123"; // Cambiá esto
+  const ADMIN_PASSWORD = "gol123";
 
   const app = initializeApp(firebaseConfig);
   const db = getFirestore(app);
 
-  // ---- State ----
   let players = [];
   let matches = [];
   let isAdmin = false;
   let selectedTeamA = new Set();
   let selectedTeamB = new Set();
 
-  // ---- DOM Ready ----
   window.addEventListener("DOMContentLoaded", () => {
     listenPlayers();
     listenMatches();
@@ -57,6 +51,12 @@
     document.getElementById("btn-admin-login").addEventListener("click", loginAdmin);
     document.getElementById("admin-pass").addEventListener("keydown", e => { if(e.key==="Enter") loginAdmin(); });
     document.getElementById("sort-select").addEventListener("change", renderTabla);
+
+    // CSV export buttons
+    document.getElementById("btn-export-tabla").addEventListener("click", exportTablaCSV);
+    document.getElementById("btn-export-goleadores").addEventListener("click", exportGoleadoresCSV);
+    document.getElementById("btn-export-partidos").addEventListener("click", exportPartidosCSV);
+
     showSection("tabla");
   }
 
@@ -80,10 +80,21 @@
   }
 
   // ---- Stats Calculation ----
+  // FIX 1: calcStats now also computes goals per player (needed for tiebreaking)
+  // FIX 4: Math.floor for minimum matches threshold
   function calcStats() {
     const stats = {};
     players.forEach(p => {
-      stats[p.id] = { nombre: p.nombre, PJ: 0, PG: 0, PE: 0, PP: 0, pts: 0 };
+      stats[p.id] = { nombre: p.nombre, PJ: 0, PG: 0, PE: 0, PP: 0, pts: 0, goles: 0 };
+    });
+
+    // Accumulate goals from all matches
+    matches.forEach(m => {
+      if (m.goleadores) {
+        Object.entries(m.goleadores).forEach(([pid, g]) => {
+          if (stats[pid]) stats[pid].goles += g;
+        });
+      }
     });
 
     matches.forEach(m => {
@@ -106,10 +117,12 @@
     });
 
     const totalPartidos = matches.length;
-    const minPartidos = Math.ceil(totalPartidos * 0.6);
+    // FIX 4: Math.floor instead of Math.ceil
+    const minPartidos = Math.floor(totalPartidos * 0.6);
 
     return Object.entries(stats).map(([id, s]) => ({
       id, ...s,
+      // FIX 1: no rounding here, keep full precision for sorting
       rendimiento: s.PJ > 0 ? (s.pts / (s.PJ * 3)) * 100 : 0,
       cumpleMinimo: s.PJ >= minPartidos,
       minPartidos
@@ -121,11 +134,22 @@
     const stats = calcStats();
     const sortBy = document.getElementById("sort-select")?.value || "rendimiento";
     const totalPartidos = matches.length;
-    const minPartidos = totalPartidos > 0 ? Math.ceil(totalPartidos * 0.6) : 1;
+    const minPartidos = totalPartidos > 0 ? Math.floor(totalPartidos * 0.6) : 1;
 
+    // FIX 2: tiebreak order: rendimiento → pts → goles → PG → PJ
     const sortFn = (a, b) => {
-      if (sortBy === "rendimiento") return b.rendimiento - a.rendimiento || b.PJ - a.PJ;
-      return b.pts - a.pts || b.rendimiento - a.rendimiento;
+      if (sortBy === "rendimiento") {
+        return b.rendimiento - a.rendimiento
+          || b.pts - a.pts
+          || b.goles - a.goles
+          || b.PG - a.PG
+          || b.PJ - a.PJ;
+      }
+      return b.pts - a.pts
+        || b.rendimiento - a.rendimiento
+        || b.goles - a.goles
+        || b.PG - a.PG
+        || b.PJ - a.PJ;
     };
 
     const calificados = stats.filter(s => s.cumpleMinimo).sort(sortFn);
@@ -136,7 +160,8 @@
 
     const renderRow = (s, i, isRanked) => {
       const medal = !isRanked ? "—" : i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${i+1}`;
-      const barW = Math.round(s.rendimiento);
+      // FIX 1: round only for display
+      const barW = s.rendimiento;
       return `
       <tr class="${isRanked && i === 0 ? 'leader' : ''} ${!isRanked ? 'no-clasificado' : ''}">
         <td class="pos">${medal}</td>
@@ -175,7 +200,6 @@
 
     tbody.innerHTML = html;
 
-    // Toggle admin col header
     const thAdmin = document.getElementById("th-admin");
     if (thAdmin) thAdmin.style.display = isAdmin ? "" : "none";
   }
@@ -226,15 +250,14 @@
     }).join("");
   }
 
-
   // ---- Render Goleadores ----
   function renderGoleadores() {
     const tbody = document.getElementById("goleadores-body");
     if (!tbody) return;
 
     const goles = {};
-    const pjTotal = {};      // todos los partidos jugados
-    const pjConGoles = {};   // solo partidos con marcador > 0-0
+    const pjTotal = {};
+    const pjConGoles = {};
     players.forEach(p => { goles[p.id] = 0; pjTotal[p.id] = 0; pjConGoles[p.id] = 0; });
 
     matches.forEach(m => {
@@ -360,7 +383,6 @@
     const overlap = [...selectedTeamA].some(id => selectedTeamB.has(id));
     if (overlap) { showToast("Un jugador no puede estar en ambos equipos"); return; }
 
-    // Collect goleadores
     const goleadores = {};
     document.querySelectorAll(".gol-input").forEach(input => {
       const pid = input.dataset.pid;
@@ -395,6 +417,104 @@
     if (!confirm("¿Eliminar este partido?")) return;
     await deleteDoc(doc(db, "partidos", id));
   };
+
+  // ---- CSV Export ----
+  function downloadCSV(filename, rows) {
+    const content = rows.map(r => r.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(",")).join("\n");
+    const blob = new Blob(["\uFEFF" + content], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function exportTablaCSV() {
+    const stats = calcStats();
+    const sortBy = document.getElementById("sort-select")?.value || "rendimiento";
+    const sortFn = (a, b) => {
+      if (sortBy === "rendimiento") {
+        return b.rendimiento - a.rendimiento || b.pts - a.pts || b.goles - a.goles || b.PG - a.PG || b.PJ - a.PJ;
+      }
+      return b.pts - a.pts || b.rendimiento - a.rendimiento || b.goles - a.goles || b.PG - a.PG || b.PJ - a.PJ;
+    };
+    const sorted = [...stats.filter(s => s.cumpleMinimo).sort(sortFn), ...stats.filter(s => !s.cumpleMinimo).sort(sortFn)];
+    const rows = [
+      ["#", "Jugador", "Pts", "PJ", "PG", "PE", "PP", "Rendimiento %"],
+      ...sorted.map((s, i) => [
+        i + 1,
+        s.nombre,
+        s.pts,
+        s.PJ,
+        s.PG,
+        s.PE,
+        s.PP,
+        s.rendimiento.toFixed(2)
+      ])
+    ];
+    downloadCSV("tabla_posiciones.csv", rows);
+  }
+
+  function exportGoleadoresCSV() {
+    const goles = {};
+    const pjTotal = {};
+    const pjConGoles = {};
+    players.forEach(p => { goles[p.id] = 0; pjTotal[p.id] = 0; pjConGoles[p.id] = 0; });
+
+    matches.forEach(m => {
+      const allPlayers = [...(m.equipoA || []), ...(m.equipoB || [])];
+      const tieneGoles = m.marcador && (m.marcador.A + m.marcador.B) > 0;
+      allPlayers.forEach(pid => {
+        if (pjTotal[pid] !== undefined) {
+          pjTotal[pid]++;
+          if (tieneGoles) pjConGoles[pid]++;
+        }
+      });
+      if (m.goleadores) {
+        Object.entries(m.goleadores).forEach(([pid, g]) => {
+          if (goles[pid] !== undefined) goles[pid] += g;
+        });
+      }
+    });
+
+    const stats = players
+      .map(p => ({
+        nombre: p.nombre,
+        goles: goles[p.id] || 0,
+        pj: pjTotal[p.id] || 0,
+        pjConGoles: pjConGoles[p.id] || 0,
+        promedio: pjConGoles[p.id] > 0 ? (goles[p.id] / pjConGoles[p.id]).toFixed(2) : "0.00"
+      }))
+      .filter(p => p.goles > 0)
+      .sort((a, b) => b.goles - a.goles || parseFloat(b.promedio) - parseFloat(a.promedio));
+
+    const rows = [
+      ["#", "Jugador", "Goles", "PJ (con goles)", "PJ Total", "Promedio"],
+      ...stats.map((s, i) => [i + 1, s.nombre, s.goles, s.pjConGoles, s.pj, s.promedio])
+    ];
+    downloadCSV("goleadores.csv", rows);
+  }
+
+  function exportPartidosCSV() {
+    const playerName = id => players.find(p => p.id === id)?.nombre || id;
+    const rows = [
+      ["Fecha", "Equipo A", "Equipo B", "Resultado", "Marcador A", "Marcador B", "Goleadores"]
+    ];
+    [...matches].reverse().forEach(m => {
+      const fecha = m.fecha?.toDate ? m.fecha.toDate().toLocaleDateString("es-AR") : "—";
+      const teamA = (m.equipoA || []).map(playerName).join(", ");
+      const teamB = (m.equipoB || []).map(playerName).join(", ");
+      const res = m.resultado === "A" ? "Ganó A" : m.resultado === "B" ? "Ganó B" : "Empate";
+      const marcA = m.marcador?.A ?? "";
+      const marcB = m.marcador?.B ?? "";
+      const goles = m.goleadores
+        ? Object.entries(m.goleadores).map(([pid, g]) => `${playerName(pid)} (${g})`).join(", ")
+        : "";
+      rows.push([fecha, teamA, teamB, res, marcA, marcB, goles]);
+    });
+    downloadCSV("partidos.csv", rows);
+  }
 
   // ---- Admin ----
   function toggleAdmin() {
@@ -487,7 +607,6 @@
     overflow-x: hidden;
   }
 
-  /* ---- Header ---- */
   header {
     background: var(--bg2);
     border-bottom: 1px solid var(--border);
@@ -518,7 +637,6 @@
 
   .logo span { color: var(--text); }
 
-  /* ---- Nav ---- */
   nav { display: flex; gap: 0.25rem; }
 
   .nav-btn {
@@ -538,7 +656,6 @@
   .nav-btn.active { color: var(--verde); background: rgba(0,200,83,0.08); }
   .nav-btn.admin-active { color: var(--verde) !important; }
 
-  /* ---- Admin Panel ---- */
   .admin-panel {
     background: var(--bg2);
     border-bottom: 1px solid var(--border);
@@ -563,7 +680,6 @@
 
   .admin-panel input:focus { outline: none; border-color: var(--verde); }
 
-  /* ---- Main ---- */
   main {
     max-width: 820px;
     margin: 0 auto;
@@ -575,7 +691,6 @@
 
   @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 
-  /* ---- Section Header ---- */
   .section-header {
     display: flex;
     align-items: center;
@@ -592,7 +707,13 @@
     color: var(--text);
   }
 
-  /* ---- Sort Control ---- */
+  .section-header-right {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+  }
+
   .sort-wrap {
     display: flex;
     align-items: center;
@@ -613,7 +734,6 @@
   }
   select:focus { outline: none; border-color: var(--verde); }
 
-  /* ---- Tabla ---- */
   .tabla-wrap {
     background: var(--card);
     border: 1px solid var(--border);
@@ -712,7 +832,6 @@
 
   .empty { color: var(--muted); text-align: center; padding: 2rem; font-style: italic; }
 
-  /* ---- Admin Section (jugadores) ---- */
   .admin-section {
     margin-top: 1.5rem;
     background: var(--card);
@@ -746,7 +865,6 @@
   }
   .add-player-row input:focus { outline: none; border-color: var(--verde); }
 
-  /* ---- Buttons ---- */
   .btn {
     background: var(--verde);
     color: #000;
@@ -770,7 +888,25 @@
   }
   .btn-secondary:hover { color: var(--text); background: var(--bg2); transform: translateY(-1px); }
 
-  /* ---- Partidos List ---- */
+  /* CSV export button */
+  .btn-csv {
+    background: transparent;
+    color: var(--muted);
+    border: 1px solid var(--border);
+    padding: 0.4rem 0.85rem;
+    border-radius: 8px;
+    font-family: 'DM Sans', sans-serif;
+    font-weight: 600;
+    font-size: 0.8rem;
+    cursor: pointer;
+    transition: all 0.15s;
+    white-space: nowrap;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+  }
+  .btn-csv:hover { border-color: var(--verde); color: var(--verde); transform: translateY(-1px); }
+
   .partidos-list { display: flex; flex-direction: column; gap: 0.75rem; }
 
   .partido-card {
@@ -845,7 +981,6 @@
     font-style: italic;
   }
 
-  /* ---- Nuevo Partido ---- */
   .match-form {
     background: var(--card);
     border: 1px solid var(--border);
@@ -931,7 +1066,6 @@
 
   .form-actions { display: flex; gap: 0.75rem; }
 
-  /* ---- Toast ---- */
   #toast {
     position: fixed;
     bottom: 1.5rem;
@@ -951,8 +1085,6 @@
   }
   #toast.show { transform: translateX(-50%) translateY(0); }
 
-  /* ---- Responsive ---- */
-  /* ---- No clasificado / divisor ---- */
   tr.no-clasificado td { opacity: 0.55; }
   tr.no-clasificado .pts-badge { background: rgba(255,255,255,0.06); color: var(--muted); }
 
@@ -978,13 +1110,11 @@
     td { padding: 0.55rem 0.35rem; font-size: 0.8rem; }
     th { padding: 0.45rem 0.35rem; font-size: 0.62rem; }
 
-    /* En mobile mostramos rendimiento como número simple, sin barra */
     .winrate-cell { min-width: 52px; }
     .wr-bar { display: none; }
     .wr-wrap { background: transparent; height: auto; }
     .wr-num { font-size: 0.82rem; font-weight: 700; color: var(--verde); }
 
-    /* Ocultar PE en mobile para ahorrar espacio */
     th:nth-child(6), td:nth-child(6) { display: none; }
 
     .section-header { flex-direction: column; align-items: flex-start; }
@@ -995,9 +1125,10 @@
     .form-actions { flex-direction: column; }
     .form-actions .btn { width: 100%; justify-content: center; }
     .divisor-label { font-size: 0.65rem; }
+    .section-header-right { width: 100%; }
+    .btn-csv { font-size: 0.75rem; }
   }
 
-  /* ---- Score input ---- */
   .score-row {
     display: flex;
     align-items: center;
@@ -1035,7 +1166,6 @@
     margin-top: 1.2rem;
   }
 
-  /* ---- Goleadores inputs ---- */
   .gol-hint { color: var(--muted); font-size: 0.85rem; font-style: italic; }
 
   .gol-row {
@@ -1091,7 +1221,6 @@
     padding: 0.2rem;
   }
 
-  /* ---- Partido card updates ---- */
   .vs-center {
     display: flex;
     flex-direction: column;
@@ -1113,7 +1242,6 @@
     padding-top: 0.5rem;
   }
 
-  /* Scrollbar */
   ::-webkit-scrollbar { width: 6px; height: 6px; }
   ::-webkit-scrollbar-track { background: var(--bg); }
   ::-webkit-scrollbar-thumb { background: var(--bg3); border-radius: 3px; }
@@ -1133,7 +1261,6 @@
   </div>
 </header>
 
-<!-- Admin Login -->
 <div class="admin-panel hidden" id="admin-panel">
   <input type="password" id="admin-pass" placeholder="Contraseña admin...">
   <button class="btn" id="btn-admin-login">Entrar</button>
@@ -1145,12 +1272,15 @@
   <section class="section" id="section-tabla">
     <div class="section-header">
       <div class="section-title">Tabla de Posiciones</div>
-      <div class="sort-wrap">
-        Ordenar por
-        <select id="sort-select">
-          <option value="rendimiento">Rendimiento %</option>
-          <option value="puntos">Puntos totales</option>
-        </select>
+      <div class="section-header-right">
+        <div class="sort-wrap">
+          Ordenar por
+          <select id="sort-select">
+            <option value="rendimiento">Rendimiento %</option>
+            <option value="puntos">Puntos totales</option>
+          </select>
+        </div>
+        <button class="btn-csv" id="btn-export-tabla">⬇ CSV</button>
       </div>
     </div>
 
@@ -1175,7 +1305,6 @@
       </table>
     </div>
 
-    <!-- Add player (visible only for admins) -->
     <div class="admin-section" id="admin-jugadores" style="display:none">
       <h3>Agregar Jugador</h3>
       <div class="add-player-row">
@@ -1189,7 +1318,10 @@
   <section class="section" id="section-partidos">
     <div class="section-header">
       <div class="section-title">Partidos</div>
-      <button class="btn" id="btn-nuevo-partido" style="display:none">+ Nuevo partido</button>
+      <div class="section-header-right">
+        <button class="btn-csv" id="btn-export-partidos">⬇ CSV</button>
+        <button class="btn" id="btn-nuevo-partido" style="display:none">+ Nuevo partido</button>
+      </div>
     </div>
     <div class="partidos-list" id="partidos-list"></div>
   </section>
@@ -1259,6 +1391,7 @@
   <section class="section" id="section-goleadores">
     <div class="section-header">
       <div class="section-title">Tabla de Goleadores</div>
+      <button class="btn-csv" id="btn-export-goleadores">⬇ CSV</button>
     </div>
     <div class="tabla-wrap">
       <table>
@@ -1278,12 +1411,9 @@
     </div>
   </section>
 
-
 </main>
 
 <div id="toast"></div>
-
-
 
 </body>
 </html>
