@@ -161,7 +161,7 @@
     const renderRow = (s, i, isRanked) => {
       const medal = !isRanked ? "—" : i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${i+1}`;
       // FIX 1: round only for display
-      const barW = s.rendimiento;
+      const barW = parseFloat(s.rendimiento.toFixed(2));
       return `
       <tr class="${isRanked && i === 0 ? 'leader' : ''} ${!isRanked ? 'no-clasificado' : ''}">
         <td class="pos">${medal}</td>
